@@ -1,0 +1,261 @@
+local status, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+end)
+
+if not status or not Rayfield then return end
+
+local Window = Rayfield:CreateWindow({
+    Name = "Auto-Manager",
+    LoadingTitle = "Spam Mode Active",
+    LoadingSubtitle = "Please wait...",
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false
+})
+
+-- Create separate tabs
+local AutoBuyTab = Window:CreateTab("Auto-Buy", 4483362458)
+local AutoFarmTab = Window:CreateTab("Auto-Farm", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+
+-- Script execution state
+local scriptRunning = true
+
+-- State tracking
+local autoBuyArmor = false
+local autoBuyAccessory = false
+local autoBuySpecialization = false
+local autoBuyArrow = false 
+local autoDefeatDemonsQuest = false 
+local autoRebirth = false 
+local antiAfkEnabled = false -- Track Anti-AFK state
+
+-- Ability tracking
+local autoFlamingBreakdance = false
+local flamingBreakdanceTimer = 7.5 
+
+-- Remotes
+local BuyItemRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BuyItemRemote")
+local FlamingBreakdanceRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("FlamingBreakdanceRemote")
+local ChangeQuestRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("ChangeQuestRemote")
+local RebirthRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("RebirthRemote")
+
+-- Services
+local Player = game:GetService("Players").LocalPlayer
+local VirtualUser = game:GetService("VirtualUser")
+
+-- Target position configuration
+local lockPosition = Vector3.new(6654.60546875, 363.78582763671875, 1368.3218994140625)
+
+-- ==========================================
+-- AUTO-BUY TAB
+-- ==========================================
+AutoBuyTab:CreateSection("Toggles")
+
+AutoBuyTab:CreateToggle({
+    Name = "Auto-Buy Random Armor",
+    CurrentValue = false,
+    Flag = "ToggleArmor",
+    Callback = function(Value)
+        autoBuyArmor = Value
+    end,
+})
+
+AutoBuyTab:CreateToggle({
+    Name = "Auto-Buy Random Accessory",
+    CurrentValue = false,
+    Flag = "ToggleAccessory",
+    Callback = function(Value)
+        autoBuyAccessory = Value
+    end,
+})
+
+AutoBuyTab:CreateToggle({
+    Name = "Auto-Buy Random Specialization",
+    CurrentValue = false,
+    Flag = "ToggleSpecialization",
+    Callback = function(Value)
+        autoBuySpecialization = Value
+    end,
+})
+
+AutoBuyTab:CreateToggle({
+    Name = "Auto-Buy Arrow",
+    CurrentValue = false,
+    Flag = "ToggleArrow",
+    Callback = function(Value)
+        autoBuyArrow = Value
+    end,
+})
+
+-- ==========================================
+-- AUTO-FARM TAB
+-- ==========================================
+AutoFarmTab:CreateSection("Quest Management")
+
+-- Quest Toggle (Handles the auto-teleport position lock)
+AutoFarmTab:CreateToggle({
+    Name = "Auto-Accept Defeat 4 Demons",
+    CurrentValue = false,
+    Flag = "ToggleDefeatDemonsQuest",
+    Callback = function(Value)
+        autoDefeatDemonsQuest = Value
+    end,
+})
+
+AutoFarmTab:CreateSection("Auto Ability Use")
+
+-- Flaming Breakdance Toggle
+AutoFarmTab:CreateToggle({
+    Name = "Flaming Breakdance",
+    CurrentValue = false,
+    Flag = "ToggleFlamingBreakdance",
+    Callback = function(Value)
+        autoFlamingBreakdance = Value
+    end,
+})
+
+-- Flaming Breakdance Cooldown Slider
+AutoFarmTab:CreateSlider({
+    Name = "Breakdance Cooldown (Seconds)",
+    Range = {0, 10},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = 7.5,
+    Flag = "BreakdanceTimerSlider",
+    Callback = function(Value)
+        flamingBreakdanceTimer = Value
+    end,
+})
+
+AutoFarmTab:CreateSection("Progression")
+
+AutoFarmTab:CreateToggle({
+    Name = "Auto Rebirth",
+    CurrentValue = false,
+    Flag = "ToggleAutoRebirth",
+    Callback = function(Value)
+        autoRebirth = Value
+    end,
+})
+
+-- ==========================================
+-- SETTINGS TAB
+-- ==========================================
+SettingsTab:CreateSection("Utility")
+
+-- Anti-AFK Kick Toggle
+SettingsTab:CreateToggle({
+    Name = "Anti-AFK Kick",
+    CurrentValue = false,
+    Flag = "ToggleAntiAfk",
+    Callback = function(Value)
+        antiAfkEnabled = Value
+    end,
+})
+
+SettingsTab:CreateSection("Script Options")
+
+-- Unload Button
+SettingsTab:CreateButton({
+    Name = "Unload Script",
+    Callback = function()
+        scriptRunning = false 
+        Rayfield:Destroy()    
+    end,
+})
+
+-- ==========================================
+-- BACKGROUND LOOPS / CONNECTIONS
+-- ==========================================
+
+-- Anti-AFK Event Handling
+Player.Idled:Connect(function()
+    if scriptRunning and antiAfkEnabled then
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end
+end)
+
+-- Insanely fast master loop for buying (Runs every frame)
+task.spawn(function()
+    while scriptRunning do
+        if autoBuyArmor then
+            local args = { "Random Armor" }
+            BuyItemRemote:FireServer(unpack(args))
+        end
+
+        if autoBuyAccessory then
+            local args = { "Random Accessory" }
+            BuyItemRemote:FireServer(unpack(args))
+        end
+
+        if autoBuySpecialization then
+            local args = { "Random Specialization" }
+            BuyItemRemote:FireServer(unpack(args))
+        end
+
+        if autoBuyArrow then
+            local args = { "Arrow" }
+            BuyItemRemote:FireServer(unpack(args))
+        end
+
+        task.wait() 
+    end
+end)
+
+-- Dedicated loop for handling timed actions and position locks
+task.spawn(function()
+    local lastAbilityFired = 0
+    local lastQuestFired = 0
+    
+    while scriptRunning do
+        local currentTime = os.clock()
+
+        -- Force position lock smoothly every frame IF the quest toggle is enabled
+        if autoDefeatDemonsQuest then
+            local character = Player.Character
+            if character then
+                local hrp = character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.new(lockPosition)
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+
+            -- Handle the Auto Quest remote refresh interval (7.5s)
+            if currentTime - lastQuestFired >= 7.5 then
+                local questFolder = game:GetService("ReplicatedStorage"):WaitForChild("Quests", 3)
+                local targetQuest = questFolder and questFolder:FindFirstChild("Defeat 4 Demons")
+                
+                if targetQuest then
+                    local args = { targetQuest }
+                    ChangeQuestRemote:FireServer(unpack(args))
+                end
+                lastQuestFired = currentTime
+            end
+        end
+
+        -- Handle direct remote firing for Flaming Breakdance
+        if autoFlamingBreakdance then
+            if currentTime - lastAbilityFired >= flamingBreakdanceTimer then
+                local args = {
+                    false,
+                    Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
+                    CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
+                    1
+                }
+                FlamingBreakdanceRemote:FireServer(unpack(args))
+                lastAbilityFired = currentTime
+            end
+        end
+
+        -- Handle direct remote firing for Auto Rebirth
+        if autoRebirth then
+            RebirthRemote:FireServer()
+        end
+        
+        task.wait() 
+    end
+end)
