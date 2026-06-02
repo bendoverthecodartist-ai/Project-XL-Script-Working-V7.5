@@ -29,6 +29,7 @@ local autoDefeatDemonsQuest = false
 local autoAttack = false 
 local autoRebirth = false 
 local antiAfkEnabled = false 
+local autoTweenToEnemy = false -- New state tracking
 
 -- Ability tracking
 local autoFlamingBreakdance = false
@@ -43,10 +44,41 @@ local RebirthRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteE
 
 -- Services
 local Player = game:GetService("Players").LocalPlayer
-local VirtualUser = game:GetService("VirtualUser")
 
 -- Target position configuration
 local lockPosition = Vector3.new(6654.60546875, 363.78582763671875, 1368.3218994140625)
+
+-- Helper function to find the closest enemy within workspace.Live folders
+local function getClosestEnemy()
+    local closestEnemy = nil
+    local shortestDistance = math.huge
+    local character = Player.Character
+    local myHrp = character and character:FindFirstChild("HumanoidRootPart")
+    
+    local liveFolder = workspace:FindFirstChild("Live")
+    if not myHrp or not liveFolder then return nil end
+
+    -- Loop through each folder inside workspace.Live
+    for _, enemyFolder in ipairs(liveFolder:GetChildren()) do
+        -- Find the actual character model inside the folder
+        for _, obj in ipairs(enemyFolder:GetChildren()) do
+            if obj:IsA("Model") and obj ~= character then
+                local enemyHrp = obj:FindFirstChild("HumanoidRootPart")
+                local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                
+                -- Check if enemy is alive and has a root part
+                if enemyHrp and humanoid and humanoid.Health > 0 then
+                    local distance = (myHrp.Position - enemyHrp.Position).Magnitude
+                    if distance < shortestDistance then
+                        shortestDistance = distance
+                        closestEnemy = enemyHrp
+                    end
+                end
+            end
+        end
+    end
+    return closestEnemy
+end
 
 -- ==========================================
 -- AUTO-BUY TAB
@@ -94,7 +126,6 @@ AutoBuyTab:CreateToggle({
 -- ==========================================
 AutoFarmTab:CreateSection("Quest Management")
 
--- Quest Toggle (Handles the auto-teleport position lock)
 AutoFarmTab:CreateToggle({
     Name = "Auto-Accept Defeat 4 Demons",
     CurrentValue = false,
@@ -104,7 +135,6 @@ AutoFarmTab:CreateToggle({
     end,
 })
 
--- Working Auto Attack Toggle
 AutoFarmTab:CreateToggle({
     Name = "Auto Attack",
     CurrentValue = false,
@@ -114,9 +144,17 @@ AutoFarmTab:CreateToggle({
     end,
 })
 
+AutoFarmTab:CreateToggle({
+    Name = "Auto-Tween to Enemy",
+    CurrentValue = false,
+    Flag = "ToggleAutoTween",
+    Callback = function(Value)
+        autoTweenToEnemy = Value
+    end,
+})
+
 AutoFarmTab:CreateSection("Auto Ability Use")
 
--- Flaming Breakdance Toggle
 AutoFarmTab:CreateToggle({
     Name = "Flaming Breakdance",
     CurrentValue = false,
@@ -126,7 +164,6 @@ AutoFarmTab:CreateToggle({
     end,
 })
 
--- Flaming Breakdance Cooldown Slider
 AutoFarmTab:CreateSlider({
     Name = "Breakdance Cooldown (Seconds)",
     Range = {0, 10},
@@ -155,7 +192,6 @@ AutoFarmTab:CreateToggle({
 -- ==========================================
 SettingsTab:CreateSection("Utility")
 
--- Anti-AFK Kick Toggle
 SettingsTab:CreateToggle({
     Name = "Anti-AFK Kick",
     CurrentValue = false,
@@ -167,7 +203,6 @@ SettingsTab:CreateToggle({
 
 SettingsTab:CreateSection("Script Options")
 
--- Unload Button
 SettingsTab:CreateButton({
     Name = "Unload Script",
     Callback = function()
@@ -180,43 +215,41 @@ SettingsTab:CreateButton({
 -- BACKGROUND LOOPS / CONNECTIONS
 -- ==========================================
 
--- Anti-AFK Event Handling
-Player.Idled:Connect(function()
+local idledConnection
+idledConnection = Player.Idled:Connect(function(timeIdled)
     if scriptRunning and antiAfkEnabled then
-        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-        task.wait(1)
-        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        if timeIdled >= 1000 then 
+            pcall(function()
+                local character = Player.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end)
+        end
+    elseif not scriptRunning then
+        idledConnection:Disconnect()
     end
 end)
 
--- Insanely fast master loop for buying (Runs every frame)
 task.spawn(function()
     while scriptRunning do
         if autoBuyArmor then
-            local args = { "Random Armor" }
-            BuyItemRemote:FireServer(unpack(args))
+            BuyItemRemote:FireServer("Random Armor")
         end
-
         if autoBuyAccessory then
-            local args = { "Random Accessory" }
-            BuyItemRemote:FireServer(unpack(args))
+            BuyItemRemote:FireServer("Random Accessory")
         end
-
         if autoBuySpecialization then
-            local args = { "Random Specialization" }
-            BuyItemRemote:FireServer(unpack(args))
+            BuyItemRemote:FireServer("Random Specialization")
         end
-
         if autoBuyArrow then
-            local args = { "Arrow" }
-            BuyItemRemote:FireServer(unpack(args))
+            BuyItemRemote:FireServer("Arrow")
         end
-
         task.wait() 
     end
 end)
 
--- Dedicated loop for handling timed actions, combat, and position locks
 task.spawn(function()
     local lastAbilityFired = 0
     local lastQuestFired = 0
@@ -224,55 +257,53 @@ task.spawn(function()
     
     while scriptRunning do
         local currentTime = os.clock()
+        local character = Player.Character
+        local myHrp = character and character:FindFirstChild("HumanoidRootPart")
 
-        -- Force position lock smoothly every frame IF the quest toggle is enabled
-        if autoDefeatDemonsQuest then
-            local character = Player.Character
-            if character then
-                local hrp = character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = CFrame.new(lockPosition)
-                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        -- Movement Logic: Priority goes to Auto-Tween, then Quest Lock
+        if myHrp then
+            if autoTweenToEnemy then
+                local targetEnemyHrp = getClosestEnemy()
+                if targetEnemyHrp then
+                    -- Positioned slightly above the target to avoid clipping ground geometry
+                    myHrp.CFrame = targetEnemyHrp.CFrame * CFrame.new(0, 2, 0)
+                    myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end
-            end
-
-            -- Handle the Auto Quest remote refresh interval (7.5s)
-            if currentTime - lastQuestFired >= 7.5 then
-                local questFolder = game:GetService("ReplicatedStorage"):WaitForChild("Quests", 3)
-                local targetQuest = questFolder and questFolder:FindFirstChild("Defeat 4 Demons")
-                
-                if targetQuest then
-                    local args = { targetQuest }
-                    ChangeQuestRemote:FireServer(unpack(args))
-                end
-                lastQuestFired = currentTime
+            elseif autoDefeatDemonsQuest then
+                myHrp.CFrame = CFrame.new(lockPosition)
+                myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end
         end
 
-        -- Working Auto Attack loop using BladeCombatRemote
-        if autoAttack then
-            if currentTime - lastAttackFired >= 0.2 then
-                BladeCombatRemote:FireServer()
-                lastAttackFired = currentTime
+        -- Handle Quest Remote Interval
+        if autoDefeatDemonsQuest and (currentTime - lastQuestFired >= 7.5) then
+            local questFolder = game:GetService("ReplicatedStorage"):WaitForChild("Quests", 3)
+            local targetQuest = questFolder and questFolder:FindFirstChild("Defeat 4 Demons")
+            if targetQuest then
+                ChangeQuestRemote:FireServer(targetQuest)
             end
+            lastQuestFired = currentTime
         end
 
-        -- Handle direct remote firing for Flaming Breakdance
-        if autoFlamingBreakdance then
-            if currentTime - lastAbilityFired >= flamingBreakdanceTimer then
-                local args = {
-                    false,
-                    Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
-                    CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
-                    1
-                }
-                FlamingBreakdanceRemote:FireServer(unpack(args))
-                lastAbilityFired = currentTime
-            end
+        -- Combat loops
+        if autoAttack and (currentTime - lastAttackFired >= 0.2) then
+            BladeCombatRemote:FireServer()
+            lastAttackFired = currentTime
         end
 
-        -- Handle direct remote firing for Auto Rebirth
+        if autoFlamingBreakdance and (currentTime - lastAbilityFired >= flamingBreakdanceTimer) then
+            local args = {
+                false,
+                Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
+                CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
+                1
+            }
+            FlamingBreakdanceRemote:FireServer(unpack(args))
+            lastAbilityFired = currentTime
+        end
+
         if autoRebirth then
             RebirthRemote:FireServer()
         end
