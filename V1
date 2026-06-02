@@ -26,8 +26,9 @@ local autoBuyAccessory = false
 local autoBuySpecialization = false
 local autoBuyArrow = false 
 local autoDefeatDemonsQuest = false 
+local autoAttack = false 
 local autoRebirth = false 
-local antiAfkEnabled = false -- Track Anti-AFK state
+local antiAfkEnabled = false 
 
 -- Ability tracking
 local autoFlamingBreakdance = false
@@ -35,6 +36,7 @@ local flamingBreakdanceTimer = 7.5
 
 -- Remotes
 local BuyItemRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BuyItemRemote")
+local BladeCombatRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BladeCombatRemote")
 local FlamingBreakdanceRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("FlamingBreakdanceRemote")
 local ChangeQuestRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("ChangeQuestRemote")
 local RebirthRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("RebirthRemote")
@@ -99,6 +101,16 @@ AutoFarmTab:CreateToggle({
     Flag = "ToggleDefeatDemonsQuest",
     Callback = function(Value)
         autoDefeatDemonsQuest = Value
+    end,
+})
+
+-- Working Auto Attack Toggle
+AutoFarmTab:CreateToggle({
+    Name = "Auto Attack",
+    CurrentValue = false,
+    Flag = "ToggleAutoAttack",
+    Callback = function(Value)
+        autoAttack = Value
     end,
 })
 
@@ -204,10 +216,11 @@ task.spawn(function()
     end
 end)
 
--- Dedicated loop for handling timed actions and position locks
+-- Dedicated loop for handling timed actions, combat, and position locks
 task.spawn(function()
     local lastAbilityFired = 0
     local lastQuestFired = 0
+    local lastAttackFired = 0
     
     while scriptRunning do
         local currentTime = os.clock()
@@ -234,6 +247,14 @@ task.spawn(function()
                     ChangeQuestRemote:FireServer(unpack(args))
                 end
                 lastQuestFired = currentTime
+            end
+        end
+
+        -- Working Auto Attack loop using BladeCombatRemote
+        if autoAttack then
+            if currentTime - lastAttackFired >= 0.2 then
+                BladeCombatRemote:FireServer()
+                lastAttackFired = currentTime
             end
         end
 
