@@ -1,313 +1,359 @@
-local status, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
-end)
+local success, err = pcall(function()
+    local status, Rayfield = pcall(function()
+        return loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+    end)
 
-if not status or not Rayfield then return end
+    if not status or not Rayfield then 
+        error("Rayfield Library failed to load from GitHub. The link might be down or blocked.")
+    end
 
-local Window = Rayfield:CreateWindow({
-    Name = "Auto-Manager",
-    LoadingTitle = "Spam Mode Active",
-    LoadingSubtitle = "Please wait...",
-    ConfigurationSaving = { Enabled = false },
-    KeySystem = false
-})
+    local Window = Rayfield:CreateWindow({
+        Name = "Auto-Manager",
+        LoadingTitle = "Spam Mode Active",
+        LoadingSubtitle = "Please wait...",
+        ConfigurationSaving = { Enabled = false },
+        KeySystem = false
+    })
 
--- Create separate tabs
-local AutoBuyTab = Window:CreateTab("Auto-Buy", 4483362458)
-local AutoFarmTab = Window:CreateTab("Auto-Farm", 4483362458)
-local SettingsTab = Window:CreateTab("Settings", 4483362458)
+    -- Create separate tabs
+    local AutoBuyTab = Window:CreateTab("Auto-Buy", 4483362458)
+    local AutoFarmTab = Window:CreateTab("Auto-Farm", 4483362458)
+    local SettingsTab = Window:CreateTab("Settings", 4483362458)
 
--- Script execution state
-local scriptRunning = true
+    -- Script execution state
+    local scriptRunning = true
 
--- State tracking
-local autoBuyArmor = false
-local autoBuyAccessory = false
-local autoBuySpecialization = false
-local autoBuyArrow = false 
-local autoDefeatDemonsQuest = false 
-local autoAttack = false 
-local autoRebirth = false 
-local antiAfkEnabled = false 
-local autoTweenToEnemy = false -- New state tracking
+    -- State tracking
+    local autoBuyArmor = false
+    local autoBuyAccessory = false
+    local autoBuySpecialization = false
+    local autoBuyArrow = false 
+    local autoQuestActive = false 
+    local autoAttack = false 
+    local autoRebirth = false 
+    local autoTeleportToEnemy = false
+    local TeleportToDemons = false -- New state tracking for safe zone
 
--- Ability tracking
-local autoFlamingBreakdance = false
-local flamingBreakdanceTimer = 7.5 
+    -- Ability tracking
+    local autoFlamingBreakdance = false
+    local flamingBreakdanceTimer = 7.5 
 
--- Remotes
-local BuyItemRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BuyItemRemote")
-local BladeCombatRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("BladeCombatRemote")
-local FlamingBreakdanceRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("FlamingBreakdanceRemote")
-local ChangeQuestRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("ChangeQuestRemote")
-local RebirthRemote = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("RebirthRemote")
-
--- Services
-local Player = game:GetService("Players").LocalPlayer
-
--- Target position configuration
-local lockPosition = Vector3.new(6654.60546875, 363.78582763671875, 1368.3218994140625)
-
--- Helper function to find the closest enemy within workspace.Live folders
-local function getClosestEnemy()
-    local closestEnemy = nil
-    local shortestDistance = math.huge
-    local character = Player.Character
-    local myHrp = character and character:FindFirstChild("HumanoidRootPart")
+    -- Remotes Safely Sourced
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents", 5)
     
-    local liveFolder = workspace:FindFirstChild("Live")
-    if not myHrp or not liveFolder then return nil end
+    if not RemoteEvents then
+        error("Could not find 'RemoteEvents' folder in ReplicatedStorage.")
+    end
 
-    -- Loop through each folder inside workspace.Live
-    for _, enemyFolder in ipairs(liveFolder:GetChildren()) do
-        -- Find the actual character model inside the folder
-        for _, obj in ipairs(enemyFolder:GetChildren()) do
-            if obj:IsA("Model") and obj ~= character then
-                local enemyHrp = obj:FindFirstChild("HumanoidRootPart")
-                local humanoid = obj:FindFirstChildOfClass("Humanoid")
-                
-                -- Check if enemy is alive and has a root part
-                if enemyHrp and humanoid and humanoid.Health > 0 then
-                    local distance = (myHrp.Position - enemyHrp.Position).Magnitude
-                    if distance < shortestDistance then
-                        shortestDistance = distance
-                        closestEnemy = enemyHrp
+    local BuyItemRemote = RemoteEvents:WaitForChild("BuyItemRemote", 3)
+    local BladeCombatRemote = RemoteEvents:WaitForChild("BladeCombatRemote", 3)
+    local FlamingBreakdanceRemote = RemoteEvents:WaitForChild("FlamingBreakdanceRemote", 3)
+    local ChangeQuestRemote = RemoteEvents:WaitForChild("ChangeQuestRemote", 3)
+    local RebirthRemote = RemoteEvents:WaitForChild("RebirthRemote", 3)
+
+    -- Services
+    local Player = game:GetService("Players").LocalPlayer
+
+    -- ==========================================
+    -- DYNAMIC QUEST SCANNING
+    -- ==========================================
+    local questsFolder = ReplicatedStorage:WaitForChild("Quests", 5)
+    local discoveredQuests = {}
+    local defaultQuest = ""
+
+    if questsFolder then
+        for _, questObj in ipairs(questsFolder:GetChildren()) do
+            table.insert(discoveredQuests, questObj.Name)
+        end
+    end
+
+    -- Fallback if folder was empty or failed to index
+    if #discoveredQuests == 0 then
+        discoveredQuests = {"Defeat 10 Bandits"}
+    end
+    defaultQuest = discoveredQuests[1]
+
+    -- State tracking for selections
+    local currentTargetEnemy = "Demons" 
+    local currentSelectedQuest = defaultQuest
+
+    -- Deep-Scanning Target Function
+    local function getEnemyPosition(selection)
+        if type(selection) == "table" then
+            selection = selection[1] or tostring(selection)
+        end
+        selection = tostring(selection)
+
+        local liveFolder = workspace:FindFirstChild("Live")
+        if not liveFolder then return nil end
+
+        for _, subFolder in ipairs(liveFolder:GetChildren()) do
+            if subFolder:IsA("Folder") then
+                local targetContainer = (subFolder.Name == selection) and subFolder or subFolder:FindFirstChild(selection)
+                if targetContainer then
+                    for _, obj in ipairs(targetContainer:GetChildren()) do
+                        if obj:IsA("Model") then
+                            local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart")
+                            local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                            if hrp and humanoid and humanoid.Health > 0 then
+                                return hrp.Position
+                            end
+                        end
+                    end
+                end
+
+                for _, obj in ipairs(subFolder:GetChildren()) do
+                    if obj:IsA("Model") and string.find(obj.Name:lower(), selection:lower()) then
+                        local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart")
+                        local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                        if hrp and humanoid and humanoid.Health > 0 then
+                            return hrp.Position
+                        end
                     end
                 end
             end
         end
+        return nil
     end
-    return closestEnemy
-end
 
--- ==========================================
--- AUTO-BUY TAB
--- ==========================================
-AutoBuyTab:CreateSection("Toggles")
+    -- ==========================================
+    -- AUTO-BUY TAB
+    -- ==========================================
+    AutoBuyTab:CreateSection("Toggles")
 
-AutoBuyTab:CreateToggle({
-    Name = "Auto-Buy Random Armor",
-    CurrentValue = false,
-    Flag = "ToggleArmor",
-    Callback = function(Value)
-        autoBuyArmor = Value
-    end,
-})
+    AutoBuyTab:CreateToggle({
+        Name = "Auto-Buy Random Armor",
+        CurrentValue = false,
+        Flag = "ToggleArmor",
+        Callback = function(Value) autoBuyArmor = Value end,
+    })
 
-AutoBuyTab:CreateToggle({
-    Name = "Auto-Buy Random Accessory",
-    CurrentValue = false,
-    Flag = "ToggleAccessory",
-    Callback = function(Value)
-        autoBuyAccessory = Value
-    end,
-})
+    AutoBuyTab:CreateToggle({
+        Name = "Auto-Buy Random Accessory",
+        CurrentValue = false,
+        Flag = "ToggleAccessory",
+        Callback = function(Value) autoBuyAccessory = Value end,
+    })
 
-AutoBuyTab:CreateToggle({
-    Name = "Auto-Buy Random Specialization",
-    CurrentValue = false,
-    Flag = "ToggleSpecialization",
-    Callback = function(Value)
-        autoBuySpecialization = Value
-    end,
-})
+    AutoBuyTab:CreateToggle({
+        Name = "Auto-Buy Random Specialization",
+        CurrentValue = false,
+        Flag = "ToggleSpecialization",
+        Callback = function(Value) autoBuySpecialization = Value end,
+    })
 
-AutoBuyTab:CreateToggle({
-    Name = "Auto-Buy Arrow",
-    CurrentValue = false,
-    Flag = "ToggleArrow",
-    Callback = function(Value)
-        autoBuyArrow = Value
-    end,
-})
+    AutoBuyTab:CreateToggle({
+        Name = "Auto-Buy Arrow",
+        CurrentValue = false,
+        Flag = "ToggleArrow",
+        Callback = function(Value) autoBuyArrow = Value end,
+    })
 
--- ==========================================
--- AUTO-FARM TAB
--- ==========================================
-AutoFarmTab:CreateSection("Quest Management")
+    -- ==========================================
+    -- AUTO-FARM TAB
+    -- ==========================================
+    AutoFarmTab:CreateSection("Target Selection")
 
-AutoFarmTab:CreateToggle({
-    Name = "Auto-Accept Defeat 4 Demons",
-    CurrentValue = false,
-    Flag = "ToggleDefeatDemonsQuest",
-    Callback = function(Value)
-        autoDefeatDemonsQuest = Value
-    end,
-})
-
-AutoFarmTab:CreateToggle({
-    Name = "Auto Attack",
-    CurrentValue = false,
-    Flag = "ToggleAutoAttack",
-    Callback = function(Value)
-        autoAttack = Value
-    end,
-})
-
-AutoFarmTab:CreateToggle({
-    Name = "Auto-Tween to Enemy",
-    CurrentValue = false,
-    Flag = "ToggleAutoTween",
-    Callback = function(Value)
-        autoTweenToEnemy = Value
-    end,
-})
-
-AutoFarmTab:CreateSection("Auto Ability Use")
-
-AutoFarmTab:CreateToggle({
-    Name = "Flaming Breakdance",
-    CurrentValue = false,
-    Flag = "ToggleFlamingBreakdance",
-    Callback = function(Value)
-        autoFlamingBreakdance = Value
-    end,
-})
-
-AutoFarmTab:CreateSlider({
-    Name = "Breakdance Cooldown (Seconds)",
-    Range = {0, 10},
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 7.5,
-    Flag = "BreakdanceTimerSlider",
-    Callback = function(Value)
-        flamingBreakdanceTimer = Value
-    end,
-})
-
-AutoFarmTab:CreateSection("Progression")
-
-AutoFarmTab:CreateToggle({
-    Name = "Auto Rebirth",
-    CurrentValue = false,
-    Flag = "ToggleAutoRebirth",
-    Callback = function(Value)
-        autoRebirth = Value
-    end,
-})
-
--- ==========================================
--- SETTINGS TAB
--- ==========================================
-SettingsTab:CreateSection("Utility")
-
-SettingsTab:CreateToggle({
-    Name = "Anti-AFK Kick",
-    CurrentValue = false,
-    Flag = "ToggleAntiAfk",
-    Callback = function(Value)
-        antiAfkEnabled = Value
-    end,
-})
-
-SettingsTab:CreateSection("Script Options")
-
-SettingsTab:CreateButton({
-    Name = "Unload Script",
-    Callback = function()
-        scriptRunning = false 
-        Rayfield:Destroy()    
-    end,
-})
-
--- ==========================================
--- BACKGROUND LOOPS / CONNECTIONS
--- ==========================================
-
-local idledConnection
-idledConnection = Player.Idled:Connect(function(timeIdled)
-    if scriptRunning and antiAfkEnabled then
-        if timeIdled >= 1000 then 
-            pcall(function()
-                local character = Player.Character
-                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-            end)
-        end
-    elseif not scriptRunning then
-        idledConnection:Disconnect()
-    end
-end)
-
-task.spawn(function()
-    while scriptRunning do
-        if autoBuyArmor then
-            BuyItemRemote:FireServer("Random Armor")
-        end
-        if autoBuyAccessory then
-            BuyItemRemote:FireServer("Random Accessory")
-        end
-        if autoBuySpecialization then
-            BuyItemRemote:FireServer("Random Specialization")
-        end
-        if autoBuyArrow then
-            BuyItemRemote:FireServer("Arrow")
-        end
-        task.wait() 
-    end
-end)
-
-task.spawn(function()
-    local lastAbilityFired = 0
-    local lastQuestFired = 0
-    local lastAttackFired = 0
-    
-    while scriptRunning do
-        local currentTime = os.clock()
-        local character = Player.Character
-        local myHrp = character and character:FindFirstChild("HumanoidRootPart")
-
-        -- Movement Logic: Priority goes to Auto-Tween, then Quest Lock
-        if myHrp then
-            if autoTweenToEnemy then
-                local targetEnemyHrp = getClosestEnemy()
-                if targetEnemyHrp then
-                    -- Positioned slightly above the target to avoid clipping ground geometry
-                    myHrp.CFrame = targetEnemyHrp.CFrame * CFrame.new(0, 2, 0)
-                    myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                    myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                end
-            elseif autoDefeatDemonsQuest then
-                myHrp.CFrame = CFrame.new(lockPosition)
-                myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                myHrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    AutoFarmTab:CreateDropdown({
+        Name = "Select Enemy Target",
+        Options = {"Agni's Minions", "Agni's Overseers", "Akatsuki Grunts", "Bandits", "Demons", "Lars' Minion", "Lars' Overseers", "Rahgan's Minions", "Rahgan's Overseers", "Zoro (PTS)", "Zoro (TS)"},
+        CurrentOption = "Demons",
+        Flag = "EnemyDropdown",
+        Callback = function(Option) 
+            if type(Option) == "table" then
+                currentTargetEnemy = Option[1]
+            else
+                currentTargetEnemy = Option
             end
-        end
+        end,
+    })
 
-        -- Handle Quest Remote Interval
-        if autoDefeatDemonsQuest and (currentTime - lastQuestFired >= 7.5) then
-            local questFolder = game:GetService("ReplicatedStorage"):WaitForChild("Quests", 3)
-            local targetQuest = questFolder and questFolder:FindFirstChild("Defeat 4 Demons")
-            if targetQuest then
-                ChangeQuestRemote:FireServer(targetQuest)
+    AutoFarmTab:CreateToggle({
+        Name = "Auto-Teleport to Target",
+        CurrentValue = false,
+        Flag = "ToggleAutoTeleportEnemy",
+        Callback = function(Value) autoTeleportToEnemy = Value end,
+    })
+
+    AutoFarmTab:CreateToggle({
+        Name = "Teleport To Demons",
+        CurrentValue = false,
+        Flag = "ToggleSafeZone",
+        Callback = function(Value) TeleportToDemons = Value end,
+    })
+
+    AutoFarmTab:CreateSection("Quest Management")
+
+    AutoFarmTab:CreateDropdown({
+        Name = "Select Quest To Accept",
+        Options = discoveredQuests, 
+        CurrentOption = defaultQuest,
+        Flag = "QuestDropdown",
+        Callback = function(Option) 
+            if type(Option) == "table" then
+                currentSelectedQuest = Option[1]
+            else
+                currentSelectedQuest = Option
             end
-            lastQuestFired = currentTime
-        end
+        end,
+    })
 
-        -- Combat loops
-        if autoAttack and (currentTime - lastAttackFired >= 0.2) then
-            BladeCombatRemote:FireServer()
-            lastAttackFired = currentTime
-        end
+    AutoFarmTab:CreateToggle({
+        Name = "Auto-Accept Selected Quest",
+        CurrentValue = false,
+        Flag = "ToggleQuestActive",
+        Callback = function(Value) autoQuestActive = Value end,
+    })
 
-        if autoFlamingBreakdance and (currentTime - lastAbilityFired >= flamingBreakdanceTimer) then
-            local args = {
-                false,
-                Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
-                CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
-                1
-            }
-            FlamingBreakdanceRemote:FireServer(unpack(args))
-            lastAbilityFired = currentTime
-        end
+    AutoFarmTab:CreateSection("Combat Toggles")
 
-        if autoRebirth then
-            RebirthRemote:FireServer()
+    AutoFarmTab:CreateToggle({
+        Name = "Auto Attack",
+        CurrentValue = false,
+        Flag = "ToggleAutoAttack",
+        Callback = function(Value) autoAttack = Value end,
+    })
+
+    AutoFarmTab:CreateSection("Auto Ability Use")
+
+    AutoFarmTab:CreateToggle({
+        Name = "Flaming Breakdance",
+        CurrentValue = false,
+        Flag = "ToggleFlamingBreakdance",
+        Callback = function(Value) autoFlamingBreakdance = Value end,
+    })
+
+    AutoFarmTab:CreateSlider({
+        Name = "Breakdance Cooldown (Seconds)",
+        Range = {0, 10},
+        Increment = 0.1,
+        Suffix = "s",
+        CurrentValue = 7.5,
+        Flag = "BreakdanceTimerSlider",
+        Callback = function(Value) flamingBreakdanceTimer = Value end,
+    })
+
+    AutoFarmTab:CreateSection("Progression")
+
+    AutoFarmTab:CreateToggle({
+        Name = "Auto Rebirth",
+        CurrentValue = false,
+        Flag = "ToggleAutoRebirth",
+        Callback = function(Value) autoRebirth = Value end,
+    })
+
+    -- ==========================================
+    -- SETTINGS TAB
+    -- ==========================================
+    SettingsTab:CreateSection("Script Options")
+
+    SettingsTab:CreateButton({
+        Name = "Unload Script",
+        Callback = function()
+            scriptRunning = false 
+            Rayfield:Destroy()    
+        end,
+    })
+
+    -- ==========================================
+    -- BACKGROUND LOOPS
+    -- ==========================================
+
+    task.spawn(function()
+        while scriptRunning do
+            if autoBuyArmor and BuyItemRemote then BuyItemRemote:FireServer("Random Armor") end
+            if autoBuyAccessory and BuyItemRemote then BuyItemRemote:FireServer("Random Accessory") end
+            if autoBuySpecialization and BuyItemRemote then BuyItemRemote:FireServer("Random Specialization") end
+            if autoBuyArrow and BuyItemRemote then BuyItemRemote:FireServer("Arrow") end
+            task.wait(0.1) 
         end
+    end)
+
+    task.spawn(function()
+        local lastAbilityFired = 0
+        local lastQuestFired = 0
+        local lastAttackFired = 0
         
-        task.wait() 
-    end
+        while scriptRunning do
+            local currentTime = os.clock()
+
+            -- Teleportation tracking handler
+            if TeleportToDemons then
+                -- Override destination to safe coordinates
+                local character = Player.Character
+                if character then
+                    local hrp = character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.CFrame = CFrame.new(6657.267578125, 356.6051025390625, 1371.68212890625)
+                        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end
+                end
+            elseif autoTeleportToEnemy then
+                -- Standard enemy farm tracking loop (7 studs directly above)
+                local scanPosition = getEnemyPosition(currentTargetEnemy)
+                if scanPosition then
+                    local character = Player.Character
+                    if character then
+                        local hrp = character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(scanPosition + Vector3.new(0, 7, 0)) * CFrame.Angles(math.rad(180), 0, 0)
+                            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        end
+                    end
+                end
+            end
+
+            -- Dynamic Quest Handling Loop
+            if autoQuestActive and ChangeQuestRemote then
+                if currentTime - lastQuestFired >= 4.0 then 
+                    if questsFolder then
+                        local targetQuestInstance = questsFolder:FindFirstChild(currentSelectedQuest)
+                        
+                        if targetQuestInstance then
+                            local args = {
+                                [1] = targetQuestInstance
+                            }
+                            ChangeQuestRemote:FireServer(unpack(args))
+                        end
+                    end
+                    lastQuestFired = currentTime
+                end
+            end
+
+            -- Combat Loop (Attack remote delay maintained at 0.1)
+            if autoAttack and BladeCombatRemote then
+                if currentTime - lastAttackFired >= 0.1 then
+                    BladeCombatRemote:FireServer()
+                    lastAttackFired = currentTime
+                end
+            end
+
+            if autoFlamingBreakdance and FlamingBreakdanceRemote then
+                if currentTime - lastAbilityFired >= flamingBreakdanceTimer then
+                    local args = {
+                        false,
+                        Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
+                        CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
+                        1
+                    }
+                    FlamingBreakdanceRemote:FireServer(unpack(args))
+                    lastAbilityFired = currentTime
+                end
+            end
+
+            if autoRebirth and RebirthRemote then
+                RebirthRemote:FireServer()
+            end
+            
+            task.wait() 
+        end
+    end)
 end)
+
+if not success then
+    warn("!!! SCRIPT CRASHED ON STARTUP !!! Error context:")
+    print(err)
+end
