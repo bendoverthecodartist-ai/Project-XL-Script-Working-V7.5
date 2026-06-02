@@ -266,7 +266,7 @@ local success, err = pcall(function()
             if autoBuyAccessory and BuyItemRemote then BuyItemRemote:FireServer("Random Accessory") end
             if autoBuySpecialization and BuyItemRemote then BuyItemRemote:FireServer("Random Specialization") end
             if autoBuyArrow and BuyItemRemote then BuyItemRemote:FireServer("Arrow") end
-            task.wait(0.1) 
+            task.wait() 
         end
     end)
 
@@ -298,7 +298,7 @@ local success, err = pcall(function()
                     if character then
                         local hrp = character:FindFirstChild("HumanoidRootPart")
                         if hrp then
-                            hrp.CFrame = CFrame.new(scanPosition + Vector3.new(0, 7, 0)) * CFrame.Angles(math.rad(180), 0, 0)
+                            hrp.CFrame = CFrame.new(scanPosition + Vector3.new(0, 7, -2)) * CFrame.Angles(math.rad(180), 0, 0)
                             hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                             hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                         end
