@@ -2,11 +2,11 @@ local success, err = pcall(function()
     local status, Rayfield = pcall(function()
         return loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
     end)
-
-    if not status or not Rayfield then 
+    
+    if not status or not Rayfield then
         error("Rayfield Library failed to load from GitHub. The link might be down or blocked.")
     end
-
+    
     local Window = Rayfield:CreateWindow({
         Name = "Auto-Manager",
         LoadingTitle = "Spam Mode Active",
@@ -14,30 +14,31 @@ local success, err = pcall(function()
         ConfigurationSaving = { Enabled = false },
         KeySystem = false
     })
-
+    
     -- Create separate tabs
     local AutoBuyTab = Window:CreateTab("Auto-Buy", 4483362458)
     local AutoFarmTab = Window:CreateTab("Auto-Farm", 4483362458)
     local SettingsTab = Window:CreateTab("Settings", 4483362458)
-
+    
     -- Script execution state
     local scriptRunning = true
-
+    
     -- State tracking
     local autoBuyArmor = false
     local autoBuyAccessory = false
     local autoBuySpecialization = false
-    local autoBuyArrow = false 
-    local autoQuestActive = false 
-    local autoAttack = false 
-    local autoRebirth = false 
+    local autoBuyArrow = false
+    local autoBuyMentor = false -- Added tracking for Random Mentor
+    local autoQuestActive = false
+    local autoAttack = false
+    local autoRebirth = false
     local autoTeleportToEnemy = false
-    local TeleportToDemons = false -- New state tracking for safe zone
-
+    local TeleportToDemons = false 
+    
     -- Ability tracking
     local autoFlamingBreakdance = false
-    local flamingBreakdanceTimer = 7.5 
-
+    local flamingBreakdanceTimer = 7.5
+    
     -- Remotes Safely Sourced
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents", 5)
@@ -45,49 +46,49 @@ local success, err = pcall(function()
     if not RemoteEvents then
         error("Could not find 'RemoteEvents' folder in ReplicatedStorage.")
     end
-
+    
     local BuyItemRemote = RemoteEvents:WaitForChild("BuyItemRemote", 3)
     local BladeCombatRemote = RemoteEvents:WaitForChild("BladeCombatRemote", 3)
     local FlamingBreakdanceRemote = RemoteEvents:WaitForChild("FlamingBreakdanceRemote", 3)
     local ChangeQuestRemote = RemoteEvents:WaitForChild("ChangeQuestRemote", 3)
     local RebirthRemote = RemoteEvents:WaitForChild("RebirthRemote", 3)
-
+    
     -- Services
     local Player = game:GetService("Players").LocalPlayer
-
+    
     -- ==========================================
     -- DYNAMIC QUEST SCANNING
     -- ==========================================
     local questsFolder = ReplicatedStorage:WaitForChild("Quests", 5)
     local discoveredQuests = {}
     local defaultQuest = ""
-
+    
     if questsFolder then
         for _, questObj in ipairs(questsFolder:GetChildren()) do
             table.insert(discoveredQuests, questObj.Name)
         end
     end
-
+    
     -- Fallback if folder was empty or failed to index
     if #discoveredQuests == 0 then
         discoveredQuests = {"Defeat 10 Bandits"}
     end
     defaultQuest = discoveredQuests[1]
-
+    
     -- State tracking for selections
-    local currentTargetEnemy = "Demons" 
+    local currentTargetEnemy = "Demons"
     local currentSelectedQuest = defaultQuest
-
+    
     -- Deep-Scanning Target Function
     local function getEnemyPosition(selection)
         if type(selection) == "table" then
             selection = selection[1] or tostring(selection)
         end
         selection = tostring(selection)
-
+        
         local liveFolder = workspace:FindFirstChild("Live")
         if not liveFolder then return nil end
-
+        
         for _, subFolder in ipairs(liveFolder:GetChildren()) do
             if subFolder:IsA("Folder") then
                 local targetContainer = (subFolder.Name == selection) and subFolder or subFolder:FindFirstChild(selection)
@@ -102,7 +103,7 @@ local success, err = pcall(function()
                         end
                     end
                 end
-
+                
                 for _, obj in ipairs(subFolder:GetChildren()) do
                     if obj:IsA("Model") and string.find(obj.Name:lower(), selection:lower()) then
                         local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart")
@@ -116,33 +117,33 @@ local success, err = pcall(function()
         end
         return nil
     end
-
+    
     -- ==========================================
     -- AUTO-BUY TAB
     -- ==========================================
     AutoBuyTab:CreateSection("Toggles")
-
+    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Armor",
         CurrentValue = false,
         Flag = "ToggleArmor",
         Callback = function(Value) autoBuyArmor = Value end,
     })
-
+    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Accessory",
         CurrentValue = false,
         Flag = "ToggleAccessory",
         Callback = function(Value) autoBuyAccessory = Value end,
     })
-
+    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Specialization",
         CurrentValue = false,
         Flag = "ToggleSpecialization",
         Callback = function(Value) autoBuySpecialization = Value end,
     })
-
+    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Arrow",
         CurrentValue = false,
@@ -150,17 +151,25 @@ local success, err = pcall(function()
         Callback = function(Value) autoBuyArrow = Value end,
     })
 
+    -- Added UI Toggle for Random Mentor
+    AutoBuyTab:CreateToggle({
+        Name = "Auto-Buy Random Mentor",
+        CurrentValue = false,
+        Flag = "ToggleMentor",
+        Callback = function(Value) autoBuyMentor = Value end,
+    })
+    
     -- ==========================================
     -- AUTO-FARM TAB
     -- ==========================================
     AutoFarmTab:CreateSection("Target Selection")
-
+    
     AutoFarmTab:CreateDropdown({
         Name = "Select Enemy Target",
         Options = {"Agni's Minions", "Agni's Overseers", "Akatsuki Grunts", "Bandits", "Demons", "Lars' Minion", "Lars' Overseers", "Rahgan's Minions", "Rahgan's Overseers", "Zoro (PTS)", "Zoro (TS)"},
         CurrentOption = "Demons",
         Flag = "EnemyDropdown",
-        Callback = function(Option) 
+        Callback = function(Option)
             if type(Option) == "table" then
                 currentTargetEnemy = Option[1]
             else
@@ -168,29 +177,29 @@ local success, err = pcall(function()
             end
         end,
     })
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Auto-Teleport to Target",
         CurrentValue = false,
         Flag = "ToggleAutoTeleportEnemy",
         Callback = function(Value) autoTeleportToEnemy = Value end,
     })
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Teleport To Demons",
         CurrentValue = false,
         Flag = "ToggleSafeZone",
         Callback = function(Value) TeleportToDemons = Value end,
     })
-
+    
     AutoFarmTab:CreateSection("Quest Management")
-
+    
     AutoFarmTab:CreateDropdown({
         Name = "Select Quest To Accept",
-        Options = discoveredQuests, 
+        Options = discoveredQuests,
         CurrentOption = defaultQuest,
         Flag = "QuestDropdown",
-        Callback = function(Option) 
+        Callback = function(Option)
             if type(Option) == "table" then
                 currentSelectedQuest = Option[1]
             else
@@ -198,32 +207,32 @@ local success, err = pcall(function()
             end
         end,
     })
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Auto-Accept Selected Quest",
         CurrentValue = false,
         Flag = "ToggleQuestActive",
         Callback = function(Value) autoQuestActive = Value end,
     })
-
+    
     AutoFarmTab:CreateSection("Combat Toggles")
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Auto Attack",
         CurrentValue = false,
         Flag = "ToggleAutoAttack",
         Callback = function(Value) autoAttack = Value end,
     })
-
+    
     AutoFarmTab:CreateSection("Auto Ability Use")
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Flaming Breakdance",
         CurrentValue = false,
         Flag = "ToggleFlamingBreakdance",
         Callback = function(Value) autoFlamingBreakdance = Value end,
     })
-
+    
     AutoFarmTab:CreateSlider({
         Name = "Breakdance Cooldown (Seconds)",
         Range = {0, 10},
@@ -233,43 +242,49 @@ local success, err = pcall(function()
         Flag = "BreakdanceTimerSlider",
         Callback = function(Value) flamingBreakdanceTimer = Value end,
     })
-
+    
     AutoFarmTab:CreateSection("Progression")
-
+    
     AutoFarmTab:CreateToggle({
         Name = "Auto Rebirth",
         CurrentValue = false,
         Flag = "ToggleAutoRebirth",
         Callback = function(Value) autoRebirth = Value end,
     })
-
+    
     -- ==========================================
     -- SETTINGS TAB
     -- ==========================================
     SettingsTab:CreateSection("Script Options")
-
+    
     SettingsTab:CreateButton({
         Name = "Unload Script",
         Callback = function()
-            scriptRunning = false 
-            Rayfield:Destroy()    
+            scriptRunning = false
+            Rayfield:Destroy()
         end,
     })
-
+    
     -- ==========================================
     -- BACKGROUND LOOPS
     -- ==========================================
-
+    
     task.spawn(function()
         while scriptRunning do
             if autoBuyArmor and BuyItemRemote then BuyItemRemote:FireServer("Random Armor") end
             if autoBuyAccessory and BuyItemRemote then BuyItemRemote:FireServer("Random Accessory") end
             if autoBuySpecialization and BuyItemRemote then BuyItemRemote:FireServer("Random Specialization") end
             if autoBuyArrow and BuyItemRemote then BuyItemRemote:FireServer("Arrow") end
-            task.wait() 
+            
+            -- Added Random Mentor execution hook
+            if autoBuyMentor and BuyItemRemote then 
+                BuyItemRemote:FireServer("Random Mentor") 
+            end
+            
+            task.wait()
         end
     end)
-
+    
     task.spawn(function()
         local lastAbilityFired = 0
         local lastQuestFired = 0
@@ -277,7 +292,7 @@ local success, err = pcall(function()
         
         while scriptRunning do
             local currentTime = os.clock()
-
+            
             -- Teleportation tracking handler
             if TeleportToDemons then
                 -- Override destination to safe coordinates
@@ -305,10 +320,10 @@ local success, err = pcall(function()
                     end
                 end
             end
-
+            
             -- Dynamic Quest Handling Loop
             if autoQuestActive and ChangeQuestRemote then
-                if currentTime - lastQuestFired >= 4.0 then 
+                if currentTime - lastQuestFired >= 4.0 then
                     if questsFolder then
                         local targetQuestInstance = questsFolder:FindFirstChild(currentSelectedQuest)
                         
@@ -322,7 +337,7 @@ local success, err = pcall(function()
                     lastQuestFired = currentTime
                 end
             end
-
+            
             -- Combat Loop (Attack remote delay maintained at 0.1)
             if autoAttack and BladeCombatRemote then
                 if currentTime - lastAttackFired >= 0.1 then
@@ -330,7 +345,7 @@ local success, err = pcall(function()
                     lastAttackFired = currentTime
                 end
             end
-
+            
             if autoFlamingBreakdance and FlamingBreakdanceRemote then
                 if currentTime - lastAbilityFired >= flamingBreakdanceTimer then
                     local args = {
@@ -343,12 +358,12 @@ local success, err = pcall(function()
                     lastAbilityFired = currentTime
                 end
             end
-
+            
             if autoRebirth and RebirthRemote then
                 RebirthRemote:FireServer()
             end
             
-            task.wait() 
+            task.wait()
         end
     end)
 end)
