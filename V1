@@ -2,11 +2,11 @@ local success, err = pcall(function()
     local status, Rayfield = pcall(function()
         return loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
     end)
-    
+
     if not status or not Rayfield then
         error("Rayfield Library failed to load from GitHub. The link might be down or blocked.")
     end
-    
+
     local Window = Rayfield:CreateWindow({
         Name = "Auto-Manager",
         LoadingTitle = "Spam Mode Active",
@@ -14,225 +14,282 @@ local success, err = pcall(function()
         ConfigurationSaving = { Enabled = false },
         KeySystem = false
     })
-    
-    -- Create separate tabs
-    local AutoBuyTab = Window:CreateTab("Auto-Buy", 4483362458)
+
+    local AutoBuyTab  = Window:CreateTab("Auto-Buy",  4483362458)
     local AutoFarmTab = Window:CreateTab("Auto-Farm", 4483362458)
-    local SettingsTab = Window:CreateTab("Settings", 4483362458)
-    
-    -- Script execution state
-    local scriptRunning = true
-    
-    -- State tracking
-    local autoBuyArmor = false
-    local autoBuyAccessory = false
+    local SettingsTab = Window:CreateTab("Settings",  4483362458)
+
+    -- ==========================================
+    -- STATE
+    -- ==========================================
+    local scriptRunning         = true
+    local autoBuyArmor          = false
+    local autoBuyAccessory      = false
     local autoBuySpecialization = false
-    local autoBuyArrow = false
-    local autoBuyMentor = false -- Added tracking for Random Mentor
-    local autoQuestActive = false
-    local autoAttack = false
-    local autoRebirth = false
-    local autoTeleportToEnemy = false
-    local TeleportToDemons = false 
-    
-    -- Ability tracking
+    local autoBuyArrow          = false
+    local autoBuyMentor         = false
+    local autoQuestActive       = false
+    local autoAttack            = false
+    local autoRebirth           = false
+    local autoTeleportToEnemy   = false
+    local TeleportToDemons      = false
     local autoFlamingBreakdance = false
     local flamingBreakdanceTimer = 7.5
-    
-    -- Remotes Safely Sourced
+
+    -- ==========================================
+    -- SERVICES & REMOTES
+    -- ==========================================
+    local Players           = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Player            = Players.LocalPlayer
+
     local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents", 5)
-    
     if not RemoteEvents then
         error("Could not find 'RemoteEvents' folder in ReplicatedStorage.")
     end
-    
-    local BuyItemRemote = RemoteEvents:WaitForChild("BuyItemRemote", 3)
-    local BladeCombatRemote = RemoteEvents:WaitForChild("BladeCombatRemote", 3)
+
+    local BuyItemRemote         = RemoteEvents:WaitForChild("BuyItemRemote",         3)
+    local BladeCombatRemote     = RemoteEvents:WaitForChild("BladeCombatRemote",     3)
     local FlamingBreakdanceRemote = RemoteEvents:WaitForChild("FlamingBreakdanceRemote", 3)
-    local ChangeQuestRemote = RemoteEvents:WaitForChild("ChangeQuestRemote", 3)
-    local RebirthRemote = RemoteEvents:WaitForChild("RebirthRemote", 3)
-    
-    -- Services
-    local Player = game:GetService("Players").LocalPlayer
-    
+    local ChangeQuestRemote     = RemoteEvents:WaitForChild("ChangeQuestRemote",     3)
+    local RebirthRemote         = RemoteEvents:WaitForChild("RebirthRemote",         3)
+
     -- ==========================================
-    -- DYNAMIC QUEST SCANNING
+    -- QUEST SCANNING
     -- ==========================================
-    local questsFolder = ReplicatedStorage:WaitForChild("Quests", 5)
+    local questsFolder    = ReplicatedStorage:WaitForChild("Quests", 5)
     local discoveredQuests = {}
-    local defaultQuest = ""
-    
+    local defaultQuest     = ""
+
     if questsFolder then
-        for _, questObj in ipairs(questsFolder:GetChildren()) do
-            table.insert(discoveredQuests, questObj.Name)
+        for _, q in ipairs(questsFolder:GetChildren()) do
+            table.insert(discoveredQuests, q.Name)
         end
     end
-    
-    -- Fallback if folder was empty or failed to index
+
     if #discoveredQuests == 0 then
         discoveredQuests = {"Defeat 10 Bandits"}
     end
     defaultQuest = discoveredQuests[1]
-    
-    -- State tracking for selections
-    local currentTargetEnemy = "Demons"
+
+    local currentTargetEnemy  = "Demons"
     local currentSelectedQuest = defaultQuest
-    
-    -- Deep-Scanning Target Function
-    local function getEnemyPosition(selection)
-        if type(selection) == "table" then
-            selection = selection[1] or tostring(selection)
-        end
+
+    -- ==========================================
+    -- ENEMY SCAN + SMART CACHE
+    --
+    -- We keep a reference to the actual HumanoidRootPart of the locked enemy.
+    -- Every teleport tick we just read .Position off that one part — no scan.
+    -- We only re-scan (GetDescendants) when:
+    --   1. The script starts / target changes
+    --   2. The locked enemy's Humanoid dies (Died event)
+    --   3. The locked part gets removed from workspace (AncestryChanged)
+    -- ==========================================
+    local lockedHRP       = nil   -- the HumanoidRootPart we are currently tracking
+    local lockedHumanoid  = nil
+    local diedConn        = nil
+    local removedConn     = nil
+
+    -- Maps dropdown selection -> the actual Model name the server uses
+    local enemyModelNames = {
+        ["Agni's Minions"]    = "Agni's Minion",
+        ["Agni's Overseers"]  = "Agni's Overseer",
+        ["Akatsuki Grunts"]   = "Akatsuki Grunt",
+        ["Bandits"]           = "Bandit",
+        ["Demons"]            = "Demon",
+        ["Lars' Minion"]      = "Lars' Minion",
+        ["Lars' Overseers"]   = "Lars' Overseer",
+        ["Rahgan's Minions"]  = "Rahgan's Minion",
+        ["Rahgan's Overseers"]= "Rahgan's Overseer",
+        ["Zoro (PTS)"]        = "Zoro (PTS)",
+        ["Zoro (TS)"]         = "Zoro (TS)",
+    }
+
+    local function findEnemyHRP(selection)
+        if type(selection) == "table" then selection = selection[1] end
         selection = tostring(selection)
-        
-        local liveFolder = workspace:FindFirstChild("Live")
-        if not liveFolder then return nil end
-        
-        for _, subFolder in ipairs(liveFolder:GetChildren()) do
-            if subFolder:IsA("Folder") then
-                local targetContainer = (subFolder.Name == selection) and subFolder or subFolder:FindFirstChild(selection)
-                if targetContainer then
-                    for _, obj in ipairs(targetContainer:GetChildren()) do
-                        if obj:IsA("Model") then
-                            local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart")
-                            local humanoid = obj:FindFirstChildOfClass("Humanoid")
-                            if hrp and humanoid and humanoid.Health > 0 then
-                                return hrp.Position
-                            end
-                        end
-                    end
-                end
-                
-                for _, obj in ipairs(subFolder:GetChildren()) do
-                    if obj:IsA("Model") and string.find(obj.Name:lower(), selection:lower()) then
-                        local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("PrimaryPart")
-                        local humanoid = obj:FindFirstChildOfClass("Humanoid")
-                        if hrp and humanoid and humanoid.Health > 0 then
-                            return hrp.Position
-                        end
+
+        local modelName = enemyModelNames[selection] or selection
+        local nameLower = modelName:lower()
+
+        local playerNames = {}
+        for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+            playerNames[p.Name] = true
+            if p.Character then playerNames[p.Character.Name] = true end
+        end
+
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and not playerNames[obj.Name] then
+                if obj.Name:lower() == nameLower then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    local hum = obj:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hum.Health > 0 then
+                        return hrp, hum
                     end
                 end
             end
         end
-        return nil
+
+        print("[AutoFarm] No alive '" .. modelName .. "' found - waiting for respawn")
+        return nil, nil
     end
-    
+
+    local function lockOntoEnemy(selection)
+        if diedConn    then diedConn:Disconnect();    diedConn    = nil end
+        if removedConn then removedConn:Disconnect(); removedConn = nil end
+
+        local hrp, hum = findEnemyHRP(selection)
+        lockedHRP      = hrp
+        lockedHumanoid = hum
+
+        if not hrp then
+            print("[AutoFarm] lockOntoEnemy: no alive enemy found for '"..tostring(selection).."' - will retry")
+            return
+        end
+
+        print("[AutoFarm] Locked onto: " .. tostring(hrp.Parent and hrp.Parent.Name) .. " at " .. tostring(hrp.Position))
+
+        diedConn = hum.Died:Connect(function()
+            print("[AutoFarm] Locked enemy DIED - clearing and re-locking")
+            lockedHRP = nil
+            lockedHumanoid = nil
+            task.wait(0.2)
+            lockOntoEnemy(currentTargetEnemy)
+        end)
+
+        removedConn = hrp.AncestryChanged:Connect(function(_, newParent)
+            if not newParent then
+                print("[AutoFarm] Locked enemy HRP REMOVED - clearing and re-locking")
+                lockedHRP = nil
+                lockedHumanoid = nil
+                task.wait(0.2)
+                lockOntoEnemy(currentTargetEnemy)
+            end
+        end)
+    end
+
+    lockOntoEnemy(currentTargetEnemy)
+
+    task.spawn(function()
+        while scriptRunning do
+            if autoTeleportToEnemy then
+                if not lockedHRP or not lockedHRP.Parent then
+                    print("[AutoFarm] Retry loop firing - lockedHRP is: " .. tostring(lockedHRP))
+                    lockOntoEnemy(currentTargetEnemy)
+                end
+            end
+            task.wait(1)
+        end
+    end)
+
     -- ==========================================
     -- AUTO-BUY TAB
     -- ==========================================
     AutoBuyTab:CreateSection("Toggles")
-    
+
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Armor",
         CurrentValue = false,
         Flag = "ToggleArmor",
-        Callback = function(Value) autoBuyArmor = Value end,
+        Callback = function(v) autoBuyArmor = v end,
     })
-    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Accessory",
         CurrentValue = false,
         Flag = "ToggleAccessory",
-        Callback = function(Value) autoBuyAccessory = Value end,
+        Callback = function(v) autoBuyAccessory = v end,
     })
-    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Specialization",
         CurrentValue = false,
         Flag = "ToggleSpecialization",
-        Callback = function(Value) autoBuySpecialization = Value end,
+        Callback = function(v) autoBuySpecialization = v end,
     })
-    
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Arrow",
         CurrentValue = false,
         Flag = "ToggleArrow",
-        Callback = function(Value) autoBuyArrow = Value end,
+        Callback = function(v) autoBuyArrow = v end,
     })
-
-    -- Added UI Toggle for Random Mentor
     AutoBuyTab:CreateToggle({
         Name = "Auto-Buy Random Mentor",
         CurrentValue = false,
         Flag = "ToggleMentor",
-        Callback = function(Value) autoBuyMentor = Value end,
+        Callback = function(v) autoBuyMentor = v end,
     })
-    
+
     -- ==========================================
     -- AUTO-FARM TAB
     -- ==========================================
     AutoFarmTab:CreateSection("Target Selection")
-    
+
     AutoFarmTab:CreateDropdown({
         Name = "Select Enemy Target",
-        Options = {"Agni's Minions", "Agni's Overseers", "Akatsuki Grunts", "Bandits", "Demons", "Lars' Minion", "Lars' Overseers", "Rahgan's Minions", "Rahgan's Overseers", "Zoro (PTS)", "Zoro (TS)"},
+        Options = {
+            "Agni's Minions", "Agni's Overseers",
+            "Akatsuki Grunts", "Bandits", "Demons",
+            "Lars' Minion", "Lars' Overseers",
+            "Rahgan's Minions", "Rahgan's Overseers",
+            "Zoro (PTS)", "Zoro (TS)"
+        },
         CurrentOption = "Demons",
         Flag = "EnemyDropdown",
-        Callback = function(Option)
-            if type(Option) == "table" then
-                currentTargetEnemy = Option[1]
-            else
-                currentTargetEnemy = Option
-            end
+        Callback = function(opt)
+            currentTargetEnemy = type(opt) == "table" and opt[1] or opt
         end,
     })
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Auto-Teleport to Target",
         CurrentValue = false,
         Flag = "ToggleAutoTeleportEnemy",
-        Callback = function(Value) autoTeleportToEnemy = Value end,
+        Callback = function(v) autoTeleportToEnemy = v end,
     })
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Teleport To Demons",
         CurrentValue = false,
         Flag = "ToggleSafeZone",
-        Callback = function(Value) TeleportToDemons = Value end,
+        Callback = function(v) TeleportToDemons = v end,
     })
-    
+
     AutoFarmTab:CreateSection("Quest Management")
-    
+
     AutoFarmTab:CreateDropdown({
         Name = "Select Quest To Accept",
         Options = discoveredQuests,
         CurrentOption = defaultQuest,
         Flag = "QuestDropdown",
-        Callback = function(Option)
-            if type(Option) == "table" then
-                currentSelectedQuest = Option[1]
-            else
-                currentSelectedQuest = Option
-            end
+        Callback = function(opt)
+            currentSelectedQuest = type(opt) == "table" and opt[1] or opt
         end,
     })
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Auto-Accept Selected Quest",
         CurrentValue = false,
         Flag = "ToggleQuestActive",
-        Callback = function(Value) autoQuestActive = Value end,
+        Callback = function(v) autoQuestActive = v end,
     })
-    
+
     AutoFarmTab:CreateSection("Combat Toggles")
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Auto Attack",
         CurrentValue = false,
         Flag = "ToggleAutoAttack",
-        Callback = function(Value) autoAttack = Value end,
+        Callback = function(v) autoAttack = v end,
     })
-    
+
     AutoFarmTab:CreateSection("Auto Ability Use")
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Flaming Breakdance",
         CurrentValue = false,
         Flag = "ToggleFlamingBreakdance",
-        Callback = function(Value) autoFlamingBreakdance = Value end,
+        Callback = function(v) autoFlamingBreakdance = v end,
     })
-    
+
     AutoFarmTab:CreateSlider({
         Name = "Breakdance Cooldown (Seconds)",
         Range = {0, 10},
@@ -240,23 +297,23 @@ local success, err = pcall(function()
         Suffix = "s",
         CurrentValue = 7.5,
         Flag = "BreakdanceTimerSlider",
-        Callback = function(Value) flamingBreakdanceTimer = Value end,
+        Callback = function(v) flamingBreakdanceTimer = v end,
     })
-    
+
     AutoFarmTab:CreateSection("Progression")
-    
+
     AutoFarmTab:CreateToggle({
         Name = "Auto Rebirth",
         CurrentValue = false,
         Flag = "ToggleAutoRebirth",
-        Callback = function(Value) autoRebirth = Value end,
+        Callback = function(v) autoRebirth = v end,
     })
-    
+
     -- ==========================================
     -- SETTINGS TAB
     -- ==========================================
     SettingsTab:CreateSection("Script Options")
-    
+
     SettingsTab:CreateButton({
         Name = "Unload Script",
         Callback = function()
@@ -264,106 +321,114 @@ local success, err = pcall(function()
             Rayfield:Destroy()
         end,
     })
-    
+
     -- ==========================================
-    -- BACKGROUND LOOPS
+    -- AUTO-BUY LOOP
     -- ==========================================
-    
     task.spawn(function()
         while scriptRunning do
-            if autoBuyArmor and BuyItemRemote then BuyItemRemote:FireServer("Random Armor") end
-            if autoBuyAccessory and BuyItemRemote then BuyItemRemote:FireServer("Random Accessory") end
+            if autoBuyArmor          and BuyItemRemote then BuyItemRemote:FireServer("Random Armor")          end
+            if autoBuyAccessory      and BuyItemRemote then BuyItemRemote:FireServer("Random Accessory")      end
             if autoBuySpecialization and BuyItemRemote then BuyItemRemote:FireServer("Random Specialization") end
-            if autoBuyArrow and BuyItemRemote then BuyItemRemote:FireServer("Arrow") end
-            
-            -- Added Random Mentor execution hook
-            if autoBuyMentor and BuyItemRemote then 
-                BuyItemRemote:FireServer("Random Mentor") 
-            end
-            
-            task.wait()
+            if autoBuyArrow          and BuyItemRemote then BuyItemRemote:FireServer("Arrow")                 end
+            if autoBuyMentor         and BuyItemRemote then BuyItemRemote:FireServer("Random Mentor")         end
+            task.wait(0.1) -- small yield so we don't spam every single frame
         end
     end)
-    
+
+
+
+    -- ==========================================
+    -- MAIN FARM LOOP
+    -- ==========================================
     task.spawn(function()
         local lastAbilityFired = 0
-        local lastQuestFired = 0
-        local lastAttackFired = 0
-        
+        local lastQuestFired   = 0
+        local lastAttackFired  = 0
+        local lastTargetEnemy = currentTargetEnemy
+
         while scriptRunning do
-            local currentTime = os.clock()
-            
-            -- Teleportation tracking handler
+            local now = os.clock()
+
+            -- If dropdown changed, re-lock onto the new enemy type
+            if lastTargetEnemy ~= currentTargetEnemy then
+                lastTargetEnemy = currentTargetEnemy
+                lockOntoEnemy(currentTargetEnemy)
+            end
+
+            -- ---- TELEPORTATION ----
             if TeleportToDemons then
-                -- Override destination to safe coordinates
-                local character = Player.Character
-                if character then
-                    local hrp = character:FindFirstChild("HumanoidRootPart")
+                local char = Player.Character
+                if char then
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
                     if hrp then
                         hrp.CFrame = CFrame.new(6657.267578125, 356.6051025390625, 1371.68212890625)
-                        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        hrp.AssemblyLinearVelocity  = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
                     end
                 end
+
             elseif autoTeleportToEnemy then
-                -- Standard enemy farm tracking loop (7 studs directly above)
-                local scanPosition = getEnemyPosition(currentTargetEnemy)
-                if scanPosition then
-                    local character = Player.Character
-                    if character then
-                        local hrp = character:FindFirstChild("HumanoidRootPart")
+                -- Just read the position off the locked part — no scan needed
+                if lockedHRP and lockedHRP.Parent then
+                    local char = Player.Character
+                    if char then
+                        local hrp = char:FindFirstChild("HumanoidRootPart")
                         if hrp then
-                            hrp.CFrame = CFrame.new(scanPosition + Vector3.new(0, 7, -2)) * CFrame.Angles(math.rad(180), 0, 0)
-                            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                            local enemyCF = lockedHRP.CFrame
+                            -- 3 studs behind enemy in their local space, facing toward them, upside down
+                            hrp.CFrame = (enemyCF * CFrame.new(0, 5, 0)) * CFrame.Angles(math.rad(180), math.rad(180), 0)
+                            hrp.AssemblyLinearVelocity  = Vector3.zero
+                            hrp.AssemblyAngularVelocity = Vector3.zero
                         end
                     end
                 end
             end
-            
-            -- Dynamic Quest Handling Loop
-            if autoQuestActive and ChangeQuestRemote then
-                if currentTime - lastQuestFired >= 4.0 then
-                    if questsFolder then
-                        local targetQuestInstance = questsFolder:FindFirstChild(currentSelectedQuest)
-                        
-                        if targetQuestInstance then
-                            local args = {
-                                [1] = targetQuestInstance
-                            }
-                            ChangeQuestRemote:FireServer(unpack(args))
-                        end
+
+            -- ---- QUEST ----
+            if autoQuestActive and ChangeQuestRemote and questsFolder then
+                if now - lastQuestFired >= 4.0 then
+                    local targetQuest = questsFolder:FindFirstChild(currentSelectedQuest)
+                    if targetQuest then
+                        ChangeQuestRemote:FireServer(targetQuest)
                     end
-                    lastQuestFired = currentTime
+                    lastQuestFired = now
                 end
             end
-            
-            -- Combat Loop (Attack remote delay maintained at 0.1)
+
+            -- ---- ATTACK ----
             if autoAttack and BladeCombatRemote then
-                if currentTime - lastAttackFired >= 0.1 then
+                if now - lastAttackFired >= 0.1 then
                     BladeCombatRemote:FireServer()
-                    lastAttackFired = currentTime
+                    lastAttackFired = now
                 end
             end
-            
+
+            -- ---- FLAMING BREAKDANCE ----
             if autoFlamingBreakdance and FlamingBreakdanceRemote then
-                if currentTime - lastAbilityFired >= flamingBreakdanceTimer then
-                    local args = {
+                if now - lastAbilityFired >= flamingBreakdanceTimer then
+                    FlamingBreakdanceRemote:FireServer(
                         false,
                         Vector3.new(13940.423828125, -4525.97314453125, -2880.3310546875),
-                        CFrame.new(13940.423828125, -4525.97314453125, -2880.3310546875, 0.5124840140342712, 0.4154948592185974, -0.7514813542366028, 1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645, 0.8586967587471008, -0.24797402322292328, 0.44849616289138794),
+                        CFrame.new(
+                            13940.423828125, -4525.97314453125, -2880.3310546875,
+                            0.5124840140342712, 0.4154948592185974, -0.7514813542366028,
+                            1.4901159417490817e-08, 0.8751417398452759, 0.483866810798645,
+                            0.8586967587471008, -0.24797402322292328, 0.44849616289138794
+                        ),
                         1
-                    }
-                    FlamingBreakdanceRemote:FireServer(unpack(args))
-                    lastAbilityFired = currentTime
+                    )
+                    lastAbilityFired = now
                 end
             end
-            
+
+            -- ---- REBIRTH ----
             if autoRebirth and RebirthRemote then
                 RebirthRemote:FireServer()
             end
-            
-            task.wait()
+
+            task.wait(0.05) -- FIX: yield every frame tick; 0 (raw task.wait()) 
+                            -- hammers the engine needlessly
         end
     end)
 end)
